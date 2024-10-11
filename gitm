@@ -1,0 +1,54 @@
+#!/bin/bash
+
+# Get the git diff and escape it for JSON using Perl
+diff=$(git diff | perl -pe 's/\\/\\\\/g; s/"/\\"/g; s/\n/\\n/g; s/\r/\\r/g; s/\t/\\t/g;')
+
+# Check if there are any changes
+if [ -z "$diff" ]; then
+    echo "No changes to commit."
+    exit 1
+fi
+
+# Your Claude API endpoint and key
+CLAUDE_API_ENDPOINT="https://api.anthropic.com/v1/messages"
+CLAUDE_API_KEY="your_api_key"
+ANTHROPIC_VERSION="2023-06-01" # Make sure to use the latest version
+
+# Prepare the API request payload
+payload=$(
+    cat <<EOF
+{
+    "model": "claude-3-5-sonnet-20240620",
+    "max_tokens": 1000,
+    "messages": [
+        {
+            "role": "user",
+            "content": "Based on the following git diff, suggest a detailed and informative commit message. Format it as follows:\\n1. A concise summary line (50 chars or less)\\n2. A blank line\\n3. Bullet points detailing the main changes, each starting with a hyphen\\n\\nProvide ONLY the formatted commit message, without any additional explanation or markdown. The message should be ready to use directly in a git commit command:\\n\\n$diff"
+
+        }
+    ]
+}
+EOF
+)
+
+# Make the API request to Claude
+response=$(curl -s -X POST $CLAUDE_API_ENDPOINT \
+    -H "Content-Type: application/json" \
+    -H "x-api-key: $CLAUDE_API_KEY" \
+    -H "anthropic-version: $ANTHROPIC_VERSION" \
+    -d "$payload")
+
+# Extract the commit message from the response
+commit_message=$(echo $response | jq -r '.content[0].text // empty')
+
+if [ -z "$commit_message" ]; then
+    echo "Failed to get a commit message. API response:"
+    echo "$response" | jq '.'
+    exit 1
+fi
+
+# Copy the commit message to clipboard
+echo "$commit_message" | pbcopy
+
+echo "Suggested commit message copied to clipboard:"
+echo "$commit_message"
