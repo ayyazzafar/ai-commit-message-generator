@@ -51,7 +51,7 @@ Make sure the following are installed on your system:
 1. Clone this repository:
 
    ```bash
-   git clone https://github.com/yourusername/ai-commit-message-generator.git
+   git clone https://github.com/ayyazzafar/ai-commit-message-generator.git
    ```
 
 2. Move the `gitm` script to a directory in your `PATH` (e.g., `~/bin/`):
