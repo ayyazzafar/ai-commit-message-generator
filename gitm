@@ -1,54 +1,139 @@
 #!/bin/bash
 
-# Get the git diff and escape it for JSON using Perl
-diff=$(git diff | perl -pe 's/\\/\\\\/g; s/"/\\"/g; s/\n/\\n/g; s/\r/\\r/g; s/\t/\\t/g;')
+set -eu
 
-# Check if there are any changes
-if [ -z "$diff" ]; then
-    echo "No changes to commit."
-    exit 1
+# ANSI colors
+green='\033[0;32m'
+yellow='\033[1;33m'
+red='\033[0;31m'
+reset='\033[0m'
+
+# Default .env file path
+env_file="${GITM_ENV_FILE:-$HOME/.config/gitm/.env}"
+
+# Parse flags
+for arg in "$@"; do
+  case $arg in
+    --env=*)
+      env_file="${arg#--env=}"
+      shift
+      ;;
+    --help)
+      echo -e "${green}AI Commit Message Generator${reset}"
+      echo
+      echo "Usage: gitm [--dry] [--out=message.txt] [--edit] [--env=/path/to/.env]"
+      echo
+      echo "Options:"
+      echo "  --dry           Show the message without copying or editing"
+      echo "  --out=<file>    Save the message to a file instead of clipboard"
+      echo "  --edit          Open the message in your default editor before copying"
+      echo "  --env=<file>    Path to .env file (overrides default or GITM_ENV_FILE)"
+      echo "  --help          Show this help message"
+      echo
+      echo "Environment:"
+      echo "  CLAUDE_API_KEY     (required)"
+      echo "  CLAUDE_MODEL       (default: claude-3-7-sonnet)"
+      echo "  CLAUDE_VERSION     (default: 2023-06-01)"
+      echo "  GITM_ENV_FILE      (optional, overridden by --env)"
+      exit 0
+      ;;
+  esac
+done
+
+# Load .env if exists
+if [ -f "$env_file" ]; then
+  source "$env_file"
 fi
 
-# Your Claude API endpoint and key
+# Check dependencies
+for cmd in git curl jq pbcopy; do
+  if ! command -v $cmd &> /dev/null; then
+    echo -e "${red}❌ Required command '$cmd' not found. Please install it.${reset}"
+    exit 1
+  fi
+done
+
+# Required and default values
+: "${CLAUDE_API_KEY:?Environment variable CLAUDE_API_KEY must be set}"
+CLAUDE_MODEL="${CLAUDE_MODEL:-claude-3-7-sonnet}"
+CLAUDE_VERSION="${CLAUDE_VERSION:-2023-06-01}"
 CLAUDE_API_ENDPOINT="https://api.anthropic.com/v1/messages"
-CLAUDE_API_KEY="your_api_key"
-ANTHROPIC_VERSION="2023-06-01" # Make sure to use the latest version
 
-# Prepare the API request payload
-payload=$(
-    cat <<EOF
+# Warn if no staged changes
+if git diff --cached --quiet; then
+  echo -e "${yellow}⚠️ No staged changes found. Please run 'git add' first.${reset}"
+  exit 1
+fi
+
+# Read and escape staged diff
+diff=$(git diff --cached | perl -pe 's/\\/\\\\/g; s/"/\\"/g; s/\n/\\n/g; s/\r/\\r/g; s/\t/\\t/g;')
+
+# JSON payload
+payload=$(cat <<EOF
 {
-    "model": "claude-3-5-sonnet-20240620",
-    "max_tokens": 1000,
-    "messages": [
-        {
-            "role": "user",
-            "content": "Based on the following git diff, suggest a detailed and informative commit message. Format it as follows:\\n1. A concise summary line (50 chars or less)\\n2. A blank line\\n3. Bullet points detailing the main changes, each starting with a hyphen\\n\\nProvide ONLY the formatted commit message, without any additional explanation or markdown. The message should be ready to use directly in a git commit command:\\n\\n$diff"
-
-        }
-    ]
+  "model": "$CLAUDE_MODEL",
+  "max_tokens": 1000,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Based on the following git diff, suggest a detailed and informative commit message. Format it as follows:\\n1. A concise summary line (50 chars or less)\\n2. A blank line\\n3. Bullet points detailing the main changes, each starting with a hyphen\\n\\nProvide ONLY the formatted commit message:\\n\\n$diff"
+    }
+  ]
 }
 EOF
 )
 
-# Make the API request to Claude
-response=$(curl -s -X POST $CLAUDE_API_ENDPOINT \
-    -H "Content-Type: application/json" \
-    -H "x-api-key: $CLAUDE_API_KEY" \
-    -H "anthropic-version: $ANTHROPIC_VERSION" \
-    -d "$payload")
+# API call
+response=$(curl -s -X POST "$CLAUDE_API_ENDPOINT" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: $CLAUDE_API_KEY" \
+  -H "anthropic-version: $CLAUDE_VERSION" \
+  -d "$payload")
 
-# Extract the commit message from the response
-commit_message=$(echo $response | jq -r '.content[0].text // empty')
-
-if [ -z "$commit_message" ]; then
-    echo "Failed to get a commit message. API response:"
-    echo "$response" | jq '.'
-    exit 1
+# Check for API error
+if echo "$response" | jq -e '.error' &>/dev/null; then
+  echo -e "${red}❌ API Error:${reset}"
+  echo "$response" | jq '.'
+  exit 1
 fi
 
-# Copy the commit message to clipboard
-echo "$commit_message" | pbcopy
+# Extract message
+commit_message=$(echo "$response" | jq -r '.content[0].text // empty')
 
-echo "Suggested commit message copied to clipboard:"
+if [ -z "$commit_message" ]; then
+  echo -e "${red}❌ Failed to extract commit message.${reset}"
+  exit 1
+fi
+
+# Handle --edit
+if [[ "${1:-}" == "--edit" ]]; then
+  tmpfile=$(mktemp)
+  echo "$commit_message" > "$tmpfile"
+  ${EDITOR:-nano} "$tmpfile"
+  commit_message=$(cat "$tmpfile")
+  rm "$tmpfile"
+fi
+
+# Handle --dry
+if [[ "${1:-}" == "--dry" ]]; then
+  echo -e "${green}✏️ Commit message preview:${reset}"
+  echo
+  echo "$commit_message"
+  exit 0
+fi
+
+# Handle --out=
+for arg in "$@"; do
+  if [[ "$arg" =~ ^--out=(.*)$ ]]; then
+    outfile="${BASH_REMATCH[1]}"
+    echo "$commit_message" > "$outfile"
+    echo -e "${green}✅ Commit message saved to '$outfile'${reset}"
+    exit 0
+  fi
+done
+
+# Default: copy to clipboard
+echo "$commit_message" | pbcopy
+echo -e "${green}✅ Suggested commit message copied to clipboard:${reset}"
+echo
 echo "$commit_message"
