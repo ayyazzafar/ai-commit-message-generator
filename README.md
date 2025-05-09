@@ -1,4 +1,4 @@
-````markdown
+
 # AI Commit Message Generator
 
 **AI Commit Message Generator** is a powerful command-line tool that uses Claude AI to automatically generate well-structured and meaningful Git commit messages based on your staged code changes.
