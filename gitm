@@ -11,32 +11,41 @@ reset='\033[0m'
 # Default .env file path
 env_file="${GITM_ENV_FILE:-$HOME/.config/gitm/.env}"
 
+# Initialize flags
+include_lock_files=false
+
 # Parse flags
 for arg in "$@"; do
   case $arg in
-    --env=*)
-      env_file="${arg#--env=}"
-      shift
-      ;;
-    --help)
-      echo -e "${green}AI Commit Message Generator${reset}"
-      echo
-      echo "Usage: gitm [--dry] [--out=message.txt] [--edit] [--env=/path/to/.env]"
-      echo
-      echo "Options:"
-      echo "  --dry           Show the message without copying or editing"
-      echo "  --out=<file>    Save the message to a file instead of clipboard"
-      echo "  --edit          Open the message in your default editor before copying"
-      echo "  --env=<file>    Path to .env file (overrides default or GITM_ENV_FILE)"
-      echo "  --help          Show this help message"
-      echo
-      echo "Environment:"
-      echo "  CLAUDE_API_KEY     (required)"
-      echo "  CLAUDE_MODEL       (default: claude-3-7-sonnet)"
-      echo "  CLAUDE_VERSION     (default: 2023-06-01)"
-      echo "  GITM_ENV_FILE      (optional, overridden by --env)"
-      exit 0
-      ;;
+  --env=*)
+    env_file="${arg#--env=}"
+    shift
+    ;;
+  --include-lock-files)
+    include_lock_files=true
+    shift
+    ;;
+  --help)
+    echo -e "${green}AI Commit Message Generator${reset}"
+    echo
+    echo "Usage: gitm [--dry] [--out=message.txt] [--edit] [--env=/path/to/.env] [--include-lock-files]"
+    echo
+    echo "Options:"
+    echo "  --dry               Show the message without copying or editing"
+    echo "  --out=<file>        Save the message to a file instead of clipboard"
+    echo "  --edit              Open the message in your default editor before copying"
+    echo "  --env=<file>        Path to .env file (overrides default or GITM_ENV_FILE)"
+    echo "  --include-lock-files Include package-lock.json and pnpm-lock.yaml files in commit message generation"
+    echo "  --help              Show this help message"
+    echo
+    echo "Environment:"
+    echo "  CLAUDE_API_KEY          (required)"
+    echo "  CLAUDE_MODEL            (default: claude-3-7-sonnet)"
+    echo "  CLAUDE_VERSION          (default: 2023-06-01)"
+    echo "  GITM_ENV_FILE           (optional, overridden by --env)"
+    echo "  GITM_EXCLUDE_PATTERNS   (optional, space-separated list of patterns to exclude from diff, e.g., '*.log build/*')"
+    exit 0
+    ;;
   esac
 done
 
@@ -47,7 +56,7 @@ fi
 
 # Check dependencies
 for cmd in git curl jq pbcopy; do
-  if ! command -v $cmd &> /dev/null; then
+  if ! command -v $cmd &>/dev/null; then
     echo -e "${red}❌ Required command '$cmd' not found. Please install it.${reset}"
     exit 1
   fi
@@ -57,6 +66,7 @@ done
 : "${CLAUDE_API_KEY:?Environment variable CLAUDE_API_KEY must be set}"
 CLAUDE_MODEL="${CLAUDE_MODEL:-claude-3-7-sonnet}"
 CLAUDE_VERSION="${CLAUDE_VERSION:-2023-06-01}"
+GITM_EXCLUDE_PATTERNS="${GITM_EXCLUDE_PATTERNS:-}" # Initialize if not set
 CLAUDE_API_ENDPOINT="https://api.anthropic.com/v1/messages"
 
 # Warn if no staged changes
@@ -66,10 +76,34 @@ if git diff --cached --quiet; then
 fi
 
 # Read and escape staged diff
-diff=$(git diff --cached | perl -pe 's/\\/\\\\/g; s/"/\\"/g; s/\n/\\n/g; s/\r/\\r/g; s/\t/\\t/g;')
+pathspecs_array=()
+
+# Add default lock file exclusions if not explicitly included
+if [ "$include_lock_files" = false ]; then
+  pathspecs_array+=(':!package-lock.json')
+  pathspecs_array+=(':!pnpm-lock.yaml')
+fi
+
+# Add user-defined exclusions from GITM_EXCLUDE_PATTERNS
+if [ -n "$GITM_EXCLUDE_PATTERNS" ]; then
+  IFS=' ' read -r -a user_excludes <<<"$GITM_EXCLUDE_PATTERNS"
+  for pattern_item in "${user_excludes[@]}"; do
+    if [ -n "$pattern_item" ]; then # Ensure pattern is not empty
+      pathspecs_array+=(":!$pattern_item")
+    fi
+  done
+fi
+
+# Construct the git diff command and get the diff
+if [ ${#pathspecs_array[@]} -gt 0 ]; then
+  diff=$(git diff --cached -- "${pathspecs_array[@]}" | perl -pe 's/\\/\\\\/g; s/"/\\"/g; s/\n/\\n/g; s/\r/\\r/g; s/\t/\\t/g;')
+else
+  diff=$(git diff --cached | perl -pe 's/\\/\\\\/g; s/"/\\"/g; s/\n/\\n/g; s/\r/\\r/g; s/\t/\\t/g;')
+fi
 
 # JSON payload
-payload=$(cat <<EOF
+payload=$(
+  cat <<EOF
 {
   "model": "$CLAUDE_MODEL",
   "max_tokens": 1000,
@@ -108,7 +142,7 @@ fi
 # Handle --edit
 if [[ "${1:-}" == "--edit" ]]; then
   tmpfile=$(mktemp)
-  echo "$commit_message" > "$tmpfile"
+  echo "$commit_message" >"$tmpfile"
   ${EDITOR:-nano} "$tmpfile"
   commit_message=$(cat "$tmpfile")
   rm "$tmpfile"
@@ -126,7 +160,7 @@ fi
 for arg in "$@"; do
   if [[ "$arg" =~ ^--out=(.*)$ ]]; then
     outfile="${BASH_REMATCH[1]}"
-    echo "$commit_message" > "$outfile"
+    echo "$commit_message" >"$outfile"
     echo -e "${green}✅ Commit message saved to '$outfile'${reset}"
     exit 0
   fi

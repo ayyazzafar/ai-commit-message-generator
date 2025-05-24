@@ -1,4 +1,3 @@
-
 # AI Commit Message Generator
 
 **AI Commit Message Generator** is a powerful command-line tool that uses Claude AI to automatically generate well-structured and meaningful Git commit messages based on your staged code changes.
@@ -13,6 +12,7 @@
   - Detailed bullet points of changes
 - Supports flexible configuration using `.env` files or environment variables
 - Offers helpful CLI flags like `--dry`, `--edit`, and `--out`
+- Allows excluding specific file patterns (e.g., `*.log`, `dist/*`) from the diff using the `GITM_EXCLUDE_PATTERNS` environment variable
 - Automatically copies the message to your clipboard
 - Provides consistent, high-quality commit messages across your project
 
@@ -29,7 +29,7 @@ Implement user authentication and improve error handling
 - Enhance error handling in API endpoints
 - Update user model with password hashing
 - Add input validation for user-related operations
-````
+```
 
 ---
 
@@ -37,12 +37,12 @@ Implement user authentication and improve error handling
 
 Make sure the following are installed on your system:
 
-* Git
-* Bash
-* `curl`
-* `jq`
-* `pbcopy` (on macOS) or adjust clipboard logic for your OS
-* A Claude API key from [Anthropic](https://www.anthropic.com)
+- Git
+- Bash
+- `curl`
+- `jq`
+- `pbcopy` (on macOS) or adjust clipboard logic for your OS
+- A Claude API key from [Anthropic](https://www.anthropic.com)
 
 ---
 
@@ -57,8 +57,8 @@ Make sure the following are installed on your system:
 2. Move the `gitm` script to a directory in your `PATH` (e.g., `~/bin/`):
 
    ```bash
-   mv ai-commit-message-generator/gitm ~/bin/
-   chmod +x ~/bin/gitm
+   sudo mv ai-commit-message-generator/gitm /usr/local/bin/
+   sudo chmod +x /usr/local/bin/gitm
    ```
 
 3. Create a config file at `~/.config/gitm/.env` and add your API key and preferences:
@@ -67,6 +67,8 @@ Make sure the following are installed on your system:
    CLAUDE_API_KEY=sk-your-api-key-here
    CLAUDE_MODEL=claude-3-7-sonnet
    CLAUDE_VERSION=2023-06-01
+   # Optional: Space-separated list of patterns to exclude from the diff
+   # GITM_EXCLUDE_PATTERNS="*.log build/* temp/**/*.tmp"
    ```
 
 > 🔒 **Do not store secrets in public/shared folders like `~/bin`.**
@@ -97,13 +99,14 @@ Make sure the following are installed on your system:
 
 ## 🧰 CLI Options
 
-| Flag                  | Description                                         |
-| --------------------- | --------------------------------------------------- |
-| `--dry`               | Show message preview without copying or committing  |
-| `--edit`              | Open message in your default editor before using it |
-| `--out=message.txt`   | Save message to a file instead of clipboard         |
-| `--env=/path/to/.env` | Load environment config from custom path            |
-| `--help`              | Display usage instructions                          |
+| Flag                   | Description                                                                         | Default                                        |
+| ---------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------- |
+| `--dry`                | Show message preview without copying or committing                                  | Not set (proceeds to copy/save)                |
+| `--edit`               | Open message in your default editor before using it                                 | Not set (does not open in editor)              |
+| `--out=message.txt`    | Save message to a file instead of clipboard                                         | Not set (copies to clipboard)                  |
+| `--env=/path/to/.env`  | Load environment config from custom path                                            | `$HOME/.config/gitm/.env` (or `GITM_ENV_FILE`) |
+| `--include-lock-files` | Include `package-lock.json` and `pnpm-lock.yaml` files in commit message generation | Not set (lock files excluded)                  |
+| `--help`               | Display usage instructions                                                          | Not set (proceeds with generation)             |
 
 ---
 
@@ -113,12 +116,20 @@ You can customize the tool using:
 
 1. A default `.env` file:
 
-   * `~/.config/gitm/.env`
+   - `~/.config/gitm/.env`
 
 2. The `GITM_ENV_FILE` environment variable:
 
    ```bash
    export GITM_ENV_FILE=/secure/location/my.env
+   ```
+
+   You can also set other environment variables like `CLAUDE_MODEL`, `CLAUDE_VERSION`, or `GITM_EXCLUDE_PATTERNS` in a similar way, or within your shell's configuration file (e.g., `.zshrc`, `.bashrc`).
+
+   Example for `GITM_EXCLUDE_PATTERNS`:
+
+   ```bash
+   export GITM_EXCLUDE_PATTERNS="*.log build/* docs/**/*.md"
    ```
 
 3. Or directly with `--env` at runtime:
@@ -131,41 +142,4 @@ You can customize the tool using:
 
 ## 🧠 How It Works
 
-1. Captures staged changes using `git diff --cached`
-2. Sends the diff to Claude AI with a custom prompt
-3. Receives a cleanly formatted commit message
-4. Copies it to clipboard, saves to file, or previews as needed
-
----
-
-## 🛠 Customization
-
-You can modify the prompt structure inside the script by editing the `content` field of the payload. This allows you to:
-
-* Change the formatting
-* Add language/style rules
-* Include commit message policies
-
----
-
-## 🤝 Contributing
-
-Pull requests are welcome. Feel free to fork the repo and suggest:
-
-* Additional flags or integrations
-* OS compatibility improvements (e.g., Linux clipboard support)
-* Prompt tuning
-
----
-
-## 📄 License
-
-MIT License — see the [LICENSE](LICENSE) file for full details.
-
----
-
-## ⚠️ Disclaimer
-
-This tool depends on the Anthropic Claude API. You are responsible for managing your API usage, billing, and compliance with [Anthropic's Terms of Service](https://www.anthropic.com/legal/terms-of-service). Messages generated may need human review before committing.
-
-
+1. Captures staged changes using `
